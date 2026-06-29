@@ -58,14 +58,21 @@ jobs:
             echo "CONFIG_TARGET_mediatek_filogic=y"
             echo "CONFIG_TARGET_mediatek_filogic_DEVICE_${DEVICE}=y"
             echo "CONFIG_PACKAGE_kmod-ip6-tunnel=m"
+            echo "CONFIG_PACKAGE_kmod-iptunnel6=m"
+            echo "CONFIG_PACKAGE_kmod-iptunnel4=m"
+            echo "CONFIG_PACKAGE_kmod-iptunnel=m"
             echo "CONFIG_PACKAGE_kmod-nat46=m"
             echo "CONFIG_PACKAGE_map=m"
             echo "CONFIG_PACKAGE_ds-lite=m"
           } > .config
-          # mtk_eth_soc.c references HNAT reset symbols (MTK_FE_RESET_*, HIT_BIND_FORCE_TO_CPU)
-          # defined in the HNAT headers; the filogic subtarget enables WED but not HNAT, so
-          # enable HNAT in the kernel config to make those symbols available.
+          # mtk_eth_soc.c references HNAT reset symbols; enable HNAT so the kernel builds.
           echo "CONFIG_NET_MEDIATEK_HNAT=y" >> target/linux/mediatek/filogic/config-6.6
+          # ip6_tunnel.ko needs xfrm6_tunnel_register/deregister (xfrm6_tunnel.ko) and tunnel6;
+          # these aren't OpenWrt packages, so enable them in the kernel config and harvest the .ko.
+          echo "CONFIG_INET6_XFRM_TUNNEL=m" >> target/linux/mediatek/filogic/config-6.6
+          echo "CONFIG_INET_XFRM_TUNNEL=m"  >> target/linux/mediatek/filogic/config-6.6
+          echo "CONFIG_INET6_TUNNEL=m"      >> target/linux/mediatek/filogic/config-6.6
+          echo "CONFIG_INET_TUNNEL=m"       >> target/linux/mediatek/filogic/config-6.6
           make defconfig
           echo "=== HNAT in resolved config? ==="
           grep -E 'CONFIG_NET_MEDIATEK_HNAT|CONFIG_NET_MEDIATEK_SOC_WED' .config build_dir/target-*/linux-*/linux-6.6.95/.config 2>/dev/null | head || true
@@ -81,18 +88,25 @@ jobs:
           cd src
           make -j$(nproc) || (echo '=== retry verbose to surface error ==='; make -j1 V=s)
 
-      - name: Collect packages
+      - name: Collect raw .ko (ip6_tunnel + all load deps)
         run: |
           cd src
+          KDIR=$(find build_dir -maxdepth 3 -type d -name 'linux-6.6.95' | head -1)
+          echo "KDIR=$KDIR"
           mkdir -p ../out
-          for p in kmod-ip6-tunnel kmod-nat46 map ds-lite; do
-            find bin -name "${p}*.ipk" -exec cp -v {} ../out/ \; || true
+          # ip6_tunnel and its transitive load-time deps (tunnel6/xfrm6_tunnel + ipv4 siblings)
+          for ko in \
+            net/ipv6/ip6_tunnel.ko net/ipv6/tunnel6.ko net/ipv6/xfrm6_tunnel.ko net/ipv6/ip6_udp_tunnel.ko \
+            net/ipv4/tunnel4.ko net/ipv4/xfrm4_tunnel.ko ; do
+            f="$KDIR/$ko"
+            if [ -f "$f" ]; then cp -v "$f" ../out/; else echo "MISSING $ko"; fi
           done
-          echo "=== kmods dir listing for reference ==="
-          find bin -path '*kmods*' -name '*.ipk' | head -60 || true
+          # nat46.ko (built under its own package dir)
+          find build_dir -name 'nat46.ko' -exec cp -v {} ../out/ \; || true
           echo "=== collected ==="
           ls -la ../out
-          test -n "$(ls -A ../out 2>/dev/null)" || { echo 'NO PACKAGES FOUND'; exit 1; }
+          test -f ../out/ip6_tunnel.ko || { echo 'ip6_tunnel.ko MISSING'; exit 1; }
+          test -f ../out/xfrm6_tunnel.ko || { echo 'xfrm6_tunnel.ko MISSING (xfrm config not built)'; exit 1; }
           (cd ../out && sha256sum * > sha256sums)
           cat ../out/sha256sums
 
@@ -100,15 +114,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: kmods
-          name: "AX6000 fleth kmods (ip6-tunnel + nat46 + map + ds-lite)"
+          name: "AX6000 fleth kmods (raw .ko, kernel 6.6.95)"
           body: |
-            Built from ImmortalWrt @ e400119267 (kernel 6.6.95) for
-            xiaomi_redmi-router-ax6000-ubootmod. Kernel-matched, opkg-installable.
-
-            On the router:
-            ```
-            opkg install /tmp/kmod-ip6-tunnel*.ipk /tmp/kmod-nat46*.ipk /tmp/map*.ipk /tmp/ds-lite*.ipk
-            ```
+            Raw kernel modules for ImmortalWrt @ e400119267 (kernel 6.6.95),
+            xiaomi_redmi-router-ax6000-ubootmod. vermagic-matched, load via modprobe.
+            Includes ip6_tunnel + tunnel6 + xfrm6_tunnel (+ ipv4 siblings) + nat46.
+            Place in /lib/modules/6.6.95/ and modprobe ip6_tunnel.
           files: out/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
