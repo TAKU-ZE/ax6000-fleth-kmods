@@ -7,8 +7,8 @@ permissions:
   contents: write
 
 env:
-  IMMORTALWRT_BRANCH: "openwrt-24.10"
-  IMMORTALWRT_COMMIT: "e400119267"
+  # full SHA — the short rev is rebased out of openwrt-24.10 history, fetch by SHA
+  IMMORTALWRT_COMMIT: "e4001192674e8d381233dab8755b133e42c71cc6"
   DEVICE: "xiaomi_redmi-router-ax6000-ubootmod"
 
 jobs:
@@ -34,12 +34,15 @@ jobs:
             gettext git libncurses-dev libssl-dev python3-distutils python3-setuptools \
             rsync swig unzip zlib1g-dev file wget libelf-dev ccache
 
-      - name: Clone ImmortalWrt at firmware commit
+      - name: Clone ImmortalWrt at firmware commit (by full SHA)
         run: |
-          git clone --branch "$IMMORTALWRT_BRANCH" https://github.com/immortalwrt/immortalwrt.git src
+          git init src
           cd src
-          git checkout "$IMMORTALWRT_COMMIT"
+          git remote add origin https://github.com/immortalwrt/immortalwrt.git
+          git fetch --depth 1 origin "$IMMORTALWRT_COMMIT"
+          git checkout FETCH_HEAD
           echo "=== HEAD ==="; git log --oneline -1
+          echo "=== kernel version ==="; grep -E 'LINUX_VERSION-6.6' include/kernel-6.6 || true
 
       - name: Update and install feeds
         run: |
