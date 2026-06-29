@@ -62,7 +62,13 @@ jobs:
             echo "CONFIG_PACKAGE_map=m"
             echo "CONFIG_PACKAGE_ds-lite=m"
           } > .config
+          # mtk_eth_soc.c references HNAT reset symbols (MTK_FE_RESET_*, HIT_BIND_FORCE_TO_CPU)
+          # defined in the HNAT headers; the filogic subtarget enables WED but not HNAT, so
+          # enable HNAT in the kernel config to make those symbols available.
+          echo "CONFIG_NET_MEDIATEK_HNAT=y" >> target/linux/mediatek/filogic/config-6.6
           make defconfig
+          echo "=== HNAT in resolved config? ==="
+          grep -E 'CONFIG_NET_MEDIATEK_HNAT|CONFIG_NET_MEDIATEK_SOC_WED' .config build_dir/target-*/linux-*/linux-6.6.95/.config 2>/dev/null | head || true
           echo "=== selected check ==="
           grep -E 'CONFIG_PACKAGE_(kmod-ip6-tunnel|kmod-nat46|map|ds-lite)=' .config || true
           grep -E "DEVICE_${DEVICE}=y" .config || true
